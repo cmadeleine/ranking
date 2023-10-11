@@ -7,12 +7,19 @@ from gurobipy import GRB
 import math
 import csv
 from scipy.stats import norm
+from optspace import OptSpace
 
 # ALGORITHMS BEING TESTED:
 # Linear Programming: lp
 # Spectral Method/Rank Centrality: spec
 # Spectral MLE: mle
 # Low Rank Pairwise Ranking: lrpr
+
+def logit(p):
+    return math.log2(p / (1 - p))
+
+def logit_inv(p):
+    return math.pow(2, p) / (1 + math.pow(2, p))
 
 # creating synthetic data for P matrix in BTL and Thurstone models, approximating ideal matrix P*
 def make_P(n, e, L, w):
@@ -83,6 +90,7 @@ def make_w(n):
     w[0] = 0.5
     for i in range(1, n):
         w[i] = random.random()* 0.3 + 0.7
+        # w[i] = random.random() + 1
 
     #df = pd.DataFrame(data=w)
     #df.to_excel('w_vector.xlsx', sheet_name='w_vector')
@@ -201,6 +209,7 @@ def spec_algorithm(P_btl):
 def mle_algorithm(E_init, E_iter, w_min, w_max):
 
     w_spec = spec_algorithm(E_init)
+    # print('before part 1: ', w_spec)
     w_mle = [0] * n
     tau_step = (w_max - w_min) / 100
 
@@ -229,9 +238,11 @@ def mle_algorithm(E_init, E_iter, w_min, w_max):
             # print("tau_best: ", tau_best)
             # break
 
+        # print('before part 2: ', w_mle)
+
         E_min = math.sqrt(math.log2(n) / (n * e * L))
         E_max = math.sqrt(math.log2(n) / (e * L))
-        E_t = E_min + 1/(math.pow(2, t)) * (E_max - E_min)
+        E_t = (E_min + 1/(math.pow(2, t)) * (E_max - E_min)) / 100
 
         # print("E_t: ", E_t)
 
@@ -242,11 +253,60 @@ def mle_algorithm(E_init, E_iter, w_min, w_max):
             # print("diff: ", abs(w_mle[i] - w_t[i]))
             if (abs(w_mle[i] - w_t[i]) > E_t):
                 w_t[i] = w_mle[i]
-                # print("modified: ", i, ", ", w_mle[i])
+                print("modified: ", i, ", ", w_mle[i])
             else:
                 # redundant, but here for clarity
                 w_t[i] = w_t[i]
+        # print('after part 2: ', w_t)
     return w_t
+
+def lrpr_algorithm(P_btl):
+
+    # P with linking function applied
+    link_btl = np.zeros((n, n))
+    for i in range(0, n):
+        for j in range(0, n):
+            if (P_btl[i][j] == 0):
+                link_btl[i][j] = 0
+            else:
+                # 1 / (1 - x) undefined
+                if (P_btl[i][j] == 1):
+                    link_btl[i][j] = 0
+                    continue
+                link_btl[i][j] = math.log2(P_btl[i][j] / (1 - P_btl[i][j]))
+
+    df = pd.DataFrame(data = link_btl)
+    df.to_excel('link_btl.xlsx', sheet_name='link_btl')      
+
+    os = OptSpace('auto', 5, 0.001)
+    U, S, V = os.solve(link_btl)
+
+    opt_mat = np.zeros((n, n))
+
+    df = pd.DataFrame(data = U)
+    df.to_excel('U.xlsx', sheet_name='U')
+    df = pd.DataFrame(data = S)
+    df.to_excel('S.xlsx', sheet_name='S')
+    df = pd.DataFrame(data = V)
+    df.to_excel('V.xlsx', sheet_name='V')
+
+    # print("U: ", U, "\nS: ", S, "\nV: ", V)
+
+    inv_link_btl = np.zeros((n, n))
+    
+    for i in range (0, n):
+        for j in range(0, n):
+            if (i == j):
+                inv_link_btl[i][j] = 1/2
+            elif (opt_mat[i][j] > opt_mat[j][i]):
+                inv_ij = math.pow(2, opt_mat[i][j]) / (1 + math.pow(2, opt_mat[i][j]))
+                inv_ji = math.pow(2, opt_mat[j][i]) / (1 + math.pow(2, opt_mat[j][i]) )                                     
+                inv_link_btl[i][j] = 1/2 + min(abs(inv_ij - 1/2), abs(inv_ji - 1/2))
+            else:
+                inv_link_btl[i][j] = 1/2 - min(abs(inv_ij - 1/2), abs(inv_ji - 1/2))
+
+    # what next??
+    return
 
 # run a trial with n items, 
 # where e is the probability that any pair of elements will be compared, 
@@ -256,26 +316,37 @@ def simulate(n, L, e):
     w_norm = np.asarray(w) / sum(w)
     P_btl, P_thu, E_init, E_iter = make_P(n, e, L, w)
 
+    # print("w_norm: ", w_norm)
 #==================Linear Program==================
 # models: btl, thurstone
 # approximating w vector with: w_btl, w_thu
-    w_btl, w_thu = lp_algorithm(P_btl, P_thu)
+    # w_btl, w_thu = lp_algorithm(P_btl, P_thu)
+
+    w_btl = [0]*n
+    w_thu = [0]*n
 
 #==================Spectral Method==================
 # models: btl
 # approximating w vector with: pi
     pi = spec_algorithm(P_btl)
 
+    # print("pi: ", pi)
+
 #======================MLE==========================
 # models: btl
 # approximating w vector with: w_mle
     w_mle = mle_algorithm(E_init, E_iter, min(w_norm), max(w_norm))
+    # w_mle = [0]*n
+
+    # print("w_mle: ", w_mle)
 
 #================Low Rank Pairwise Ranking=================
-
+# models: btl, thu
+# approximating w vector with: w_lrpr
     # apply a link function to matrix, probit and logit same as link functions applied above
-    # run a matrix completion algorithm - 
-    # QUESTION: paper lists OptSpace, which seems to only be accessible in R?
+    # run a matrix completion algorithm -
+    w_lrpr = lrpr_algorithm(P_btl) 
+    
 
 #==================Comparing Algorithms==================
 
@@ -327,8 +398,8 @@ def simulate(n, L, e):
 def run_trial(n, L, e, rank, err):
 
     rankings, errors = simulate(n, L, e)
-    print("rankings: ", rankings)
-    print("errors: ", errors)
+    # print("rankings: ", rankings)
+    # print("errors: ", errors)
 
     str_lp_btl = "\"btl\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + ","
     str_lp_thu = "\"thu\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + ","
@@ -410,21 +481,14 @@ ranks = open("ranks.csv", "w")
 err = open("errors.csv", "w")
 init_csv(ranks, err)
 
-#n = 20
-#L = n*n*n
-#e = 2 * math.log(n) / n
-
-#comparisons = [math.pow(n, 1), math.pow(n, 2), math.pow(n, 2.5), math.pow(n, 2.75), math.pow(n, 2.875), math.pow(n, 3)]
-
 #simulate(n, L, e)
 
-for n in [100]:
+for n in [50]:
     #L = n*n*50
     for L in [50]:
         # e = 10 * math.log(n) / n
-        e = 0.2
-        # QUESTION: for RC, e = d/n where d is 'poly-logarithmic in n' - does this value fit that?
-        for j in range(0, 50):
+        e = 0.5
+        for j in range(0, 20):
                 print(n, L, j)
                 run_trial(n, L, e, ranks, err)
 
