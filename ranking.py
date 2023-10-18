@@ -15,6 +15,7 @@ from optspace import OptSpace
 # Spectral MLE: mle
 # Low Rank Pairwise Ranking: lrpr
 
+
 def logit(p):
     return math.log2(p / (1 - p))
 
@@ -85,12 +86,13 @@ def make_P(n, e, L, w):
     return P_btl, P_thu, E_init, E_iter
 
 # creating 1D  w vector: value/weight/score of each element
-def make_w(n):
+def make_w(n, delta_k):
     w = [0] * n
     w[0] = 0.5
     for i in range(1, n):
-        w[i] = random.random()* 0.3 + 0.7
-        # w[i] = random.random() + 1
+        # FIX THIS!!!!!
+        w[i] = random.random() * (0.5 - delta_k) + (0.5 + delta_k)
+
 
     #df = pd.DataFrame(data=w)
     #df.to_excel('w_vector.xlsx', sheet_name='w_vector')
@@ -213,12 +215,17 @@ def mle_algorithm(E_init, E_iter, w_min, w_max):
     w_mle = [0] * n
     tau_step = (w_max - w_min) / 100
 
+    # print("tau_step: ", tau_step)
+
     # print("w_min, w_max: ", w_min, w_max)
     w_t = w_spec.copy()
 
-    for t in range(0, 1):
+    T = math.floor(5 * math.log2(n))
+    # print("T: ", T)
+
+    for t in range(0, T):
         # coordinate wise MLE part 1
-        for i in range(0, n):
+        for i in range(0, n): 
             tau_best = float('-inf')
             max_P = float('-inf')
             tau = w_min
@@ -240,24 +247,29 @@ def mle_algorithm(E_init, E_iter, w_min, w_max):
 
         # print('before part 2: ', w_mle)
 
+        
         E_min = math.sqrt(math.log2(n) / (n * e * L))
         E_max = math.sqrt(math.log2(n) / (e * L))
-        E_t = (E_min + 1/(math.pow(2, t)) * (E_max - E_min)) / 100
+        E_t = (E_min + 1/(math.pow(2, t)) * (E_max - E_min)) / 10
 
-        # print("E_t: ", E_t)
+        # print("\tE_t: ", E_t)
 
         # print("mle before part 2:")
         # print(w_mle)
         # MLE part 2
+        modified = False
         for i in range(0, n):
             # print("diff: ", abs(w_mle[i] - w_t[i]))
             if (abs(w_mle[i] - w_t[i]) > E_t):
                 w_t[i] = w_mle[i]
-                print("modified: ", i, ", ", w_mle[i])
+                modified = True
+                print("\tmodified: ", i, ", ", w_mle[i])
             else:
                 # redundant, but here for clarity
                 w_t[i] = w_t[i]
-        # print('after part 2: ', w_t)
+        if (not modified):
+            break
+        # print('before part 3: ', w_t)
     return w_t
 
 def lrpr_algorithm(P_btl):
@@ -276,12 +288,12 @@ def lrpr_algorithm(P_btl):
                 link_btl[i][j] = math.log2(P_btl[i][j] / (1 - P_btl[i][j]))
 
     df = pd.DataFrame(data = link_btl)
-    df.to_excel('link_btl.xlsx', sheet_name='link_btl')      
+    df.to_excel('link_btl.xlsx', sheet_name='link_btl')
 
-    os = OptSpace('auto', 5, 0.001)
+    os = OptSpace(2, 5, 0.0001)
     U, S, V = os.solve(link_btl)
 
-    opt_mat = np.zeros((n, n))
+    opt_mat = np.matmul(np.matmul(U, S), V.T)
 
     df = pd.DataFrame(data = U)
     df.to_excel('U.xlsx', sheet_name='U')
@@ -290,54 +302,86 @@ def lrpr_algorithm(P_btl):
     df = pd.DataFrame(data = V)
     df.to_excel('V.xlsx', sheet_name='V')
 
+    df = pd.DataFrame(data = opt_mat)
+    df.to_excel('opt_mat.xlsx', sheet_name='opt_mat')
+
     # print("U: ", U, "\nS: ", S, "\nV: ", V)
 
     inv_link_btl = np.zeros((n, n))
     
     for i in range (0, n):
         for j in range(0, n):
-            if (i == j):
-                inv_link_btl[i][j] = 1/2
-            elif (opt_mat[i][j] > opt_mat[j][i]):
+            # added this because as is, optspace changes all matrix values (not just fills in missing)
+            if (P_btl[i][j] == 0):
                 inv_ij = math.pow(2, opt_mat[i][j]) / (1 + math.pow(2, opt_mat[i][j]))
-                inv_ji = math.pow(2, opt_mat[j][i]) / (1 + math.pow(2, opt_mat[j][i]) )                                     
-                inv_link_btl[i][j] = 1/2 + min(abs(inv_ij - 1/2), abs(inv_ji - 1/2))
+                inv_ji = math.pow(2, opt_mat[j][i]) / (1 + math.pow(2, opt_mat[j][i]))  
+                if (i == j):
+                    inv_link_btl[i][j] = 1/2
+                elif (opt_mat[i][j] > opt_mat[j][i]):                                     
+                    inv_link_btl[i][j] = 1/2 + min(abs(inv_ij - 1/2), abs(inv_ji - 1/2))
+                else:
+                    inv_link_btl[i][j] = 1/2 - min(abs(inv_ij - 1/2), abs(inv_ji - 1/2))
             else:
-                inv_link_btl[i][j] = 1/2 - min(abs(inv_ij - 1/2), abs(inv_ji - 1/2))
+                inv_link_btl[i][j] = P_btl[i][j]
 
-    # what next??
-    return
+    df = pd.DataFrame(data = inv_link_btl)
+    df.to_excel('inv_link_btl.xlsx', sheet_name='inv_link_btl')
+
+    # sigma = spec_algorithm(inv_link_btl)
+
+    sigma = [0] * n
+
+    for i in range (0, n):
+        for j in range (0, n):
+            if (inv_link_btl[i][j] > 0.5):
+                sigma[i] += 1
+
+
+    df = pd.DataFrame(data = sigma)
+    df.to_excel('sigma.xlsx', sheet_name='sigma')
+
+    s_norm = np.asarray(sigma) / sum(sigma)
+
+    return s_norm
 
 # run a trial with n items, 
 # where e is the probability that any pair of elements will be compared, 
 # and L is the number of comparisons per pair
-def simulate(n, L, e):
-    w = make_w(n)
+def simulate(n, L, e, gap):
+    w = make_w(n, gap)
     w_norm = np.asarray(w) / sum(w)
     P_btl, P_thu, E_init, E_iter = make_P(n, e, L, w)
+
+    df = pd.DataFrame(data = P_btl)
+    df.to_excel('P_btl.xlsx', sheet_name='P_btl')
 
     # print("w_norm: ", w_norm)
 #==================Linear Program==================
 # models: btl, thurstone
 # approximating w vector with: w_btl, w_thu
-    # w_btl, w_thu = lp_algorithm(P_btl, P_thu)
+    w_btl, w_thu = lp_algorithm(P_btl, P_thu)
 
-    w_btl = [0]*n
-    w_thu = [0]*n
+    # w_btl = [0]*n
+    # w_thu = [0]*n
 
 #==================Spectral Method==================
 # models: btl
 # approximating w vector with: pi
     pi = spec_algorithm(P_btl)
 
+    df = pd.DataFrame(data = pi)
+    df.to_excel('pi.xlsx', sheet_name='pi')
+
     # print("pi: ", pi)
 
 #======================MLE==========================
 # models: btl
 # approximating w vector with: w_mle
-    w_mle = mle_algorithm(E_init, E_iter, min(w_norm), max(w_norm))
+    w_mle = mle_algorithm(P_btl, P_btl, min(w_norm), max(w_norm))
     # w_mle = [0]*n
 
+    df = pd.DataFrame(data = w_mle)
+    df.to_excel('w_mle.xlsx', sheet_name='w_mle')
     # print("w_mle: ", w_mle)
 
 #================Low Rank Pairwise Ranking=================
@@ -347,10 +391,12 @@ def simulate(n, L, e):
     # run a matrix completion algorithm -
     w_lrpr = lrpr_algorithm(P_btl) 
     
+    # w_lrpr = [0] * n
+    
 
 #==================Comparing Algorithms==================
 
-    w_comp = np.zeros((n, 6))
+    w_comp = np.zeros((n, 7))
 
     # comparing normalized w (ideal), our algorithm (btl), spectral mle (btl), our algorithm (thurstone), spectral MLE (btl)
     for i in range(0, n):
@@ -360,17 +406,16 @@ def simulate(n, L, e):
         w_comp[i][3] = w_thu[i]
         w_comp[i][4] = pi[i]
         w_comp[i][5] = w_mle[i]
-
-    #df = pd.DataFrame(data = w_comp)
-    #df.to_excel('w_comp.xlsx', sheet_name='w_comp')
+        w_comp[i][6] = w_lrpr[i]
 
     w_sort = np.argsort(w)
     w_btl_sort = np.argsort(w_btl)
     w_thu_sort = np.argsort(w_thu)
     pi_sort = np.argsort(pi)
     mle_sort = np.argsort(w_mle)
+    lrpr_sort = np.argsort(w_lrpr)
 
-    rankings_comp = np.zeros((n, 5))
+    rankings_comp = np.zeros((n, 6))
 
     for i in range(0, n):
         rankings_comp[i][0] = w_sort[i]
@@ -378,6 +423,7 @@ def simulate(n, L, e):
         rankings_comp[i][2] = w_thu_sort[i]
         rankings_comp[i][3] = pi_sort[i]
         rankings_comp[i][4] = mle_sort[i]
+        rankings_comp[i][5] = lrpr_sort[i]
 
     df = pd.DataFrame(data = rankings_comp)
     df.to_excel('rankings_comp.xlsx', sheet_name='rankings_comp')
@@ -387,29 +433,32 @@ def simulate(n, L, e):
     thu_error = max(abs(np.subtract(w_thu, w_norm)))/max(w_norm)
     spec_error = max(abs(np.subtract(pi, w_norm)))/max(w_norm)
     mle_error = max(abs(np.subtract(w_mle, w_norm)))/max(w_norm)
+    lrpr_error = max(abs(np.subtract(w_lrpr, w_norm)))/max(w_norm)
 
-    df = pd.DataFrame(data = [btl_error, thu_error, spec_error])
+    df = pd.DataFrame(data = [btl_error, thu_error, spec_error, mle_error, lrpr_error])
     df.to_excel('errors.xlsx', sheet_name='errors')
 
 
-    return rankings_comp, [btl_error, thu_error, spec_error, mle_error]
+    return rankings_comp, [btl_error, thu_error, spec_error, mle_error, lrpr_error]
 
 # running an instance of a simulation, and recording the results in csv files
-def run_trial(n, L, e, rank, err):
+def run_trial(n, L, e, gap, rank, err):
 
-    rankings, errors = simulate(n, L, e)
+    rankings, errors = simulate(n, L, e, gap)
     # print("rankings: ", rankings)
     # print("errors: ", errors)
 
-    str_lp_btl = "\"btl\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + ","
-    str_lp_thu = "\"thu\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + ","
-    str_spec_btl = "\"btl\",\"spec\"," + str(n) + "," + str(e) + "," + str(L) + ","
-    str_mle_btl = "\"btl\",\"mle\"," + str(n) + "," + str(e) + "," + str(L) + ","
+    str_lp_btl = "\"btl\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + ","
+    str_lp_thu = "\"thu\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + ","
+    str_spec_btl = "\"btl\",\"spec\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + ","
+    str_mle_btl = "\"btl\",\"mle\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + ","
+    str_lrpr_btl = "\"btl\",\"lrpr\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + ","
 
-    err.write("\"btl\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(errors[0]) + "\n")
-    err.write("\"thu\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(errors[1]) + "\n")
-    err.write("\"btl\",\"spec\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(errors[2]) + "\n")
-    err.write("\"btl\",\"mle\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(errors[3]) + "\n")
+    err.write("\"btl\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + "," + str(errors[0]) + "\n")
+    err.write("\"thu\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + "," + str(errors[1]) + "\n")
+    err.write("\"btl\",\"spec\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + "," + str(errors[2]) + "\n")
+    err.write("\"btl\",\"mle\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + "," + str(errors[3]) + "\n")
+    err.write("\"btl\",\"lrpr\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + "," + str(errors[4]) + "\n")
 
     # objective ranking (w), vs each of our algorithms
     rank_true = set()
@@ -417,6 +466,7 @@ def run_trial(n, L, e, rank, err):
     rank_lp_thu = set()
     rank_spec_btl = set()
     rank_mle_btl = set()
+    rank_lrpr_btl = set()
 
     for k in range(0, 20):
         rank_true.add(rankings[k][0])
@@ -424,37 +474,44 @@ def run_trial(n, L, e, rank, err):
         rank_lp_thu.add(rankings[k][2])
         rank_spec_btl.add(rankings[k][3])
         rank_mle_btl.add(rankings[k][4])
+        rank_lrpr_btl.add(rankings[k][5])
 
         lp_btl_correct = len(rank_true.intersection(rank_lp_btl))
         lp_thu_correct = len(rank_true.intersection(rank_lp_thu))
         spec_btl_correct = len(rank_true.intersection(rank_spec_btl))
         mle_btl_correct = len(rank_true.intersection(rank_mle_btl))
+        lrpr_btl_correct = len(rank_true.intersection(rank_lrpr_btl))
 
         lp_btl_correct = lp_btl_correct == k + 1
         lp_thu_correct = lp_thu_correct == k + 1
         spec_btl_correct = spec_btl_correct == k + 1
         mle_btl_correct = mle_btl_correct == k + 1
+        lrpr_btl_correct = lrpr_btl_correct == k + 1
 
         str_lp_btl += (str(round(lp_btl_correct, 3)))
         str_lp_thu += (str(round(lp_thu_correct, 3)))
         str_spec_btl += (str(round(spec_btl_correct, 3)))
         str_mle_btl += (str(round(mle_btl_correct, 3)))
+        str_lrpr_btl += (str(round(lrpr_btl_correct, 3)))
     
         if (k==19):
             str_lp_btl += ("\n")
             str_lp_thu += ("\n")
             str_spec_btl += ("\n")
             str_mle_btl += ("\n")
+            str_lrpr_btl += ("\n")
         else:
             str_lp_btl += (",")
             str_lp_thu += (",")
             str_spec_btl += (",")
             str_mle_btl += (",")
+            str_lrpr_btl += (",")
     
     rank.write(str_lp_btl)
     rank.write(str_lp_thu)
     rank.write(str_spec_btl)
     rank.write(str_mle_btl)
+    rank.write(str_lrpr_btl)
 
         
 
@@ -469,6 +526,9 @@ def init_csv(main, error) :
     error.write("\"epsilon\",")
     main.write("\"comparisons\",")
     error.write("\"comparisons\",")
+    main.write("\"gap\",")
+    error.write("\"gap\",")
+
     error.write("\"error\"\n")
     for i in range(0, 20):
         main.write("\"top_" + str(i + 1) + "\"")
@@ -481,16 +541,16 @@ ranks = open("ranks.csv", "w")
 err = open("errors.csv", "w")
 init_csv(ranks, err)
 
-#simulate(n, L, e)
 
-for n in [50]:
+for n in [100]:
     #L = n*n*50
     for L in [50]:
         # e = 10 * math.log(n) / n
-        e = 0.5
-        for j in range(0, 20):
+        e = 0.50
+        gap = 0.1
+        for j in range(0, 25):
                 print(n, L, j)
-                run_trial(n, L, e, ranks, err)
+                run_trial(n, L, e, gap, ranks, err)
 
 
 ranks.close()
