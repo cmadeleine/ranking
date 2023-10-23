@@ -56,32 +56,32 @@ def make_P(n, e, L, w):
     df = pd.DataFrame(data=P_btl)
     df.to_excel('P_btl.xlsx', sheet_name='P_btl')
 
-    #======================MLE==========================
-    E_size = len(E_set)
-    E_half = random.sample(E_set, (E_size // 2))
+    # #======================MLE==========================
+    # E_size = len(E_set)
+    # E_half = random.sample(E_set, (E_size // 2))
 
-    # partition of edge set into init and iter
+    # # partition of edge set into init and iter
     E_init = np.zeros((n, n))
     E_iter = np.zeros((n, n))
 
-    # fill in E_init and E_iter matrices for MLE
-    for i in range(0, n):
-        for j in range(i, n):
-            if (i==j):
-                E_init[i][j] = 1/2
-                E_iter[i][j] = 1/2
-            elif (P_btl[i][j] != 0):
-                if ((i, j) in E_half):
-                    E_init[i][j] = P_btl[i][j]
-                    E_init[j][i] = P_btl[j][i]
-                else:
-                    E_iter[i][j] = P_btl[i][j]
-                    E_iter[j][i] = P_btl[j][i]
+    # # fill in E_init and E_iter matrices for MLE
+    # for i in range(0, n):
+    #     for j in range(i, n):
+    #         if (i==j):
+    #             E_init[i][j] = 1/2
+    #             E_iter[i][j] = 1/2
+    #         elif (P_btl[i][j] != 0):
+    #             if ((i, j) in E_half):
+    #                 E_init[i][j] = P_btl[i][j]
+    #                 E_init[j][i] = P_btl[j][i]
+    #             else:
+    #                 E_iter[i][j] = P_btl[i][j]
+    #                 E_iter[j][i] = P_btl[j][i]
 
-    df = pd.DataFrame(data=E_init)
-    df.to_excel('E_init.xlsx', sheet_name='E_init')
-    df = pd.DataFrame(data=E_iter)
-    df.to_excel('E_iter.xlsx', sheet_name='E_iter')
+    # df = pd.DataFrame(data=E_init)
+    # df.to_excel('E_init.xlsx', sheet_name='E_init')
+    # df = pd.DataFrame(data=E_iter)
+    # df.to_excel('E_iter.xlsx', sheet_name='E_iter')
 
     return P_btl, P_thu, E_init, E_iter
 
@@ -312,7 +312,7 @@ def lrpr_algorithm(P_btl):
     for i in range (0, n):
         for j in range(0, n):
             # added this because as is, optspace changes all matrix values (not just fills in missing)
-            if (P_btl[i][j] == 0):
+            # if (P_btl[i][j] == 0):
                 inv_ij = math.pow(2, opt_mat[i][j]) / (1 + math.pow(2, opt_mat[i][j]))
                 inv_ji = math.pow(2, opt_mat[j][i]) / (1 + math.pow(2, opt_mat[j][i]))  
                 if (i == j):
@@ -321,8 +321,8 @@ def lrpr_algorithm(P_btl):
                     inv_link_btl[i][j] = 1/2 + min(abs(inv_ij - 1/2), abs(inv_ji - 1/2))
                 else:
                     inv_link_btl[i][j] = 1/2 - min(abs(inv_ij - 1/2), abs(inv_ji - 1/2))
-            else:
-                inv_link_btl[i][j] = P_btl[i][j]
+            # else:
+            #     inv_link_btl[i][j] = P_btl[i][j]
 
     df = pd.DataFrame(data = inv_link_btl)
     df.to_excel('inv_link_btl.xlsx', sheet_name='inv_link_btl')
@@ -359,6 +359,8 @@ def simulate(n, L, e, gap):
 #==================Linear Program==================
 # models: btl, thurstone
 # approximating w vector with: w_btl, w_thu
+
+    print("before lp")
     w_btl, w_thu = lp_algorithm(P_btl, P_thu)
 
     # w_btl = [0]*n
@@ -367,6 +369,7 @@ def simulate(n, L, e, gap):
 #==================Spectral Method==================
 # models: btl
 # approximating w vector with: pi
+    print("before spec")
     pi = spec_algorithm(P_btl)
 
     df = pd.DataFrame(data = pi)
@@ -377,6 +380,7 @@ def simulate(n, L, e, gap):
 #======================MLE==========================
 # models: btl
 # approximating w vector with: w_mle
+    print("before mle")
     w_mle = mle_algorithm(P_btl, P_btl, min(w_norm), max(w_norm))
     # w_mle = [0]*n
 
@@ -389,7 +393,9 @@ def simulate(n, L, e, gap):
 # approximating w vector with: w_lrpr
     # apply a link function to matrix, probit and logit same as link functions applied above
     # run a matrix completion algorithm -
+    print("before lrpr")
     w_lrpr = lrpr_algorithm(P_btl) 
+    print("done")
     
     # w_lrpr = [0] * n
     
@@ -542,11 +548,11 @@ err = open("errors.csv", "w")
 init_csv(ranks, err)
 
 
-for n in [100]:
+for n in [500]:
     #L = n*n*50
     for L in [50]:
-        # e = 10 * math.log(n) / n
-        e = 0.50
+        e = 10 * math.log(n) / n
+        # e = 0.5
         gap = 0.1
         for j in range(0, 25):
                 print(n, L, j)
