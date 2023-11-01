@@ -54,9 +54,6 @@ def make_w(n, delta_k):
     for i in range(1, n):
         w[i] = random.random() * (0.5 - delta_k) + (0.5 + delta_k)
 
-
-    #df = pd.DataFrame(data=w)
-    #df.to_excel('w_vector.xlsx', sheet_name='w_vector')
     return w
 
 # approximate w with linear program
@@ -109,7 +106,7 @@ def lp_algorithm(P):
 
 # from a base matrix P_btl, find the pi vector estimating w
 def spec_algorithm(P_btl):
-    # without MLE
+
     P_T = P_btl.T
 
     d = 0
@@ -146,25 +143,22 @@ def spec_algorithm(P_btl):
         for i in range(0, n):
             pi[i] = -1 * pi[i]
 
-    # QUESTION: transition matrix gets normalized, so all vectors going forth get normalized. should mle use normalized w or raw values?
     pi = pi / sum(pi)
-    # print("pi2: ", pi)
     return pi
 
 def mle_algorithm(P_btl, w_min, w_max):
 
     w_spec = spec_algorithm(P_btl)
-    # print('before part 1: ', w_spec)
+
     w_mle = [0] * n
+
+    # checking 100 values of tau between min and max
     tau_step = (w_max - w_min) / 100
 
-    # print("tau_step: ", tau_step)
-
-    # print("w_min, w_max: ", w_min, w_max)
     w_t = w_spec.copy()
 
+    # number of iterations
     T = math.floor(5 * math.log2(n))
-    # print("T: ", T)
 
     for t in range(0, T):
         # coordinate wise MLE part 1
@@ -175,37 +169,25 @@ def mle_algorithm(P_btl, w_min, w_max):
             while (tau <= w_max):
                 curr_P = 0
                 for j in range(0, n):
-                    # # BAD FIX
-                    # if (w_spec[j] == 0):
-                    #     w_spec[j] = 0.0000001
                     # sum across j : (i, j) in E
-                    # QUESTION: should we exclude j == i, should we use E_iter
                     if (P_btl[i][j] != 0 and j != i):
                         curr_P += P_btl[i][j] * math.log2(tau / (tau + w_spec[j])) + (1 - P_btl[i][j]) * math.log2(w_spec[j]/ (tau + w_spec[j]))
-
+                # new best value for tau
                 if (curr_P > max_P):
                     max_P = curr_P
                     tau_best = tau
                 tau += tau_step
             w_mle[i] = tau_best
-            # print("tau_best: ", tau_best)
-            # break
 
-        # print('before part 2: ', w_mle)
-
-        
+        # threshold value for using mle-generated values
         E_min = math.sqrt(math.log2(n) / (n * e * L))
         E_max = math.sqrt(math.log2(n) / (e * L))
-        E_t = (E_min + 1/(math.pow(2, t)) * (E_max - E_min)) / 10
+        E_t = (E_min + 1/(math.pow(2, t)) * (E_max - E_min)) / 1000
 
-        # print("\tE_t: ", E_t)
 
-        # print("mle before part 2:")
-        # print(w_mle)
         # MLE part 2
         modified = False
         for i in range(0, n):
-            # print("diff: ", abs(w_mle[i] - w_t[i]))
             if (abs(w_mle[i] - w_t[i]) > E_t):
                 w_t[i] = w_mle[i]
                 modified = True
@@ -213,9 +195,9 @@ def mle_algorithm(P_btl, w_min, w_max):
             else:
                 # redundant, but here for clarity
                 w_t[i] = w_t[i]
+        # stop iterating if no values are modified to avoid redundant iterations
         if (not modified):
             break
-        # print('before part 3: ', w_t)
     return w_t
 
 def lrpr_algorithm(P):
@@ -238,9 +220,6 @@ def lrpr_algorithm(P):
 
     opt_mat = np.matmul(np.matmul(U, S), V.T)
 
-    df = pd.DataFrame(data = opt_mat)
-    df.to_excel('opt_mat.xlsx', sheet_name='opt_mat')
-
     inv_link = np.zeros((n, n))
     
     for i in range(0, n):
@@ -261,9 +240,6 @@ def lrpr_algorithm(P):
             if (inv_link[i][j] > 0.5):
                 sigma[i] += 1
 
-    df = pd.DataFrame(data = sigma)
-    df.to_excel('sigma.xlsx', sheet_name='sigma')
-
     s_norm = np.asarray(sigma) / sum(sigma)
 
     return s_norm
@@ -281,31 +257,27 @@ def simulate(n, L, e, gap):
     # models: btl, thurstone
     # approximating w vector with: w_btl, w_thu
     print("before lp")
-    # w_lp = lp_algorithm(P)
-    w_lp = [0]*n
+    w_lp = lp_algorithm(P)
+    # w_lp = [0]*n
     #==================Spectral Method==================
     # models: btl
     # approximating w vector with: pi
     print("before spec")
     pi = spec_algorithm(P)
 
-    df = pd.DataFrame(data = pi)
-    df.to_excel('pi.xlsx', sheet_name='pi')
     #======================MLE==========================
     # models: btl
     # approximating w vector with: w_mle
     print("before mle")
     w_mle = mle_algorithm(P, min(w_norm), max(w_norm))
-
-    df = pd.DataFrame(data = w_mle)
-    df.to_excel('w_mle.xlsx', sheet_name='w_mle')
+    # w_mle = [0]*n
 
     #================Low Rank Pairwise Ranking=================
     # models: btl, thu
     # approximating w vector with: w_lrpr
     print("before lrpr")
-    # w_lrpr = lrpr_algorithm(P) 
-    w_lrpr = [0]*n
+    w_lrpr = lrpr_algorithm(P) 
+    # w_lrpr = [0]*n
     print("done")
 
     #==================Comparing Algorithms==================
@@ -366,10 +338,22 @@ def simulate(n, L, e, gap):
     D_w_err[2] = math.sqrt(D_w_err[2] / (2*n*math.pow(np.linalg.norm(w), 2)))
     D_w_err[3] = math.sqrt(D_w_err[3] / (2*n*math.pow(np.linalg.norm(w), 2)))
 
-    
+    # alternative error according to LRPR paper
+    # for i in range(0, n):
+    #     for j in range(i, n):
+    #         if ((w_norm[i] - w_norm[j]) * (w_lp[i] - w_lp[j]) > 0):
+    #             D_w_err[0] += 1
+    #         if ((w_norm[i] - w_norm[j]) * (pi[i] - pi[j]) > 0):
+    #             D_w_err[1] += 1
+    #         if ((w_norm[i] - w_norm[j]) * (w_mle[i] - w_mle[j]) > 0):
+    #             D_w_err[2] += 1
+    #         if ((w_norm[i] - w_norm[j]) * (w_lrpr[i] - w_lrpr[j]) > 0):
+    #             D_w_err[3] += 1
 
-    df = pd.DataFrame(data = l_inf_err)
-    df.to_excel('l_inf_err.xlsx', sheet_name='l_inf_err')
+    # D_w_err[0] = D_w_err[0] / (n * (n-1) / 2)
+    # D_w_err[1] = D_w_err[1] / (n * (n-1) / 2)
+    # D_w_err[2] = D_w_err[2] / (n * (n-1) / 2)
+    # D_w_err[3] = D_w_err[3] / (n * (n-1) / 2)
 
     return rankings_comp, l_inf_err, D_w_err
 
@@ -463,19 +447,18 @@ def init_csv(main, error) :
 
 model = 'btl'
 
-ranks = open(("rank_" + model + "4.csv"), "a")
-err = open(("error_" + model + "4.csv"), "a")
+ranks = open(("rank_" + model + ".csv"), "w")
+err = open(("error_" + model + ".csv"), "w")
 init_csv(ranks, err)
 
 for n in [100]:
-    for L in [5, 10, 15, 25, 30]:  
+    for L in [10, 30, 50]:  
         for e in [0.2, 0.5, 0.8]: 
             gap = 0.0
-            for j in range(0, 200):
+            for j in range(0, 20):
                     print(n, L, e, j)
                     run_trial(n, L, e, gap, ranks, err)
 
 
 ranks.close()
 err.close()
-
