@@ -44,19 +44,25 @@ def make_P(n, e, L, w):
 # creating 1D  w vector: value/weight/score of each element; ranges from 0.5-1
 def make_w(n, delta_k):
     w = [0] * n
-    w[0] = 0.5
-    for i in range(1, n):
+    # w[0] = 0.5
+    for i in range(0, n):
         w[i] = random.random() * (0.5 - delta_k) + (0.5 + delta_k)
+
+    # for i in range(0, n):
+    #     w[i] = random.random()
+    
+    df = pd.DataFrame(data=w)
+    df.to_excel('w.xlsx', sheet_name='w')
 
     return w
 
 # approximate w with linear program
-def lp_algorithm(P):
+def lp_algorithm(P, w_min, w_max):
     # vector approximating w: w_btl
 
     m_btl = gp.Model("BTL")
     # x: 1D vector (used to approximate s)
-    x_btl = m_btl.addMVar((n, 1), lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="x")
+    x_btl = m_btl.addMVar((n, 1), lb=math.log(w_min), ub=math.log(w_max), vtype=GRB.CONTINUOUS, name="x")
     # z: nxn matrix, z = Y - P
     z_btl = m_btl.addMVar((n, n), lb=0.0, vtype=GRB.CONTINUOUS, name="z")
 
@@ -76,7 +82,8 @@ def lp_algorithm(P):
                 if (P[i][j] == 1):
                     link_btl[i][j] = 0
                     continue
-                link_btl[i][j] = math.log2(P[i][j] / (1 - P[i][j]))
+                # re run with natural log
+                link_btl[i][j] = math.log(P[i][j] / (1 - P[i][j]))
                 if (i != j):
                     mask[i][j] = 1
 
@@ -95,7 +102,7 @@ def lp_algorithm(P):
 
     # for btl:  undo log ->   x = log(w) => w = 2^x
     for i in range(0, n):
-        w_btl.append(pow(2, x_btl.X[i])[0])
+        w_btl.append(pow(math.e, x_btl.X[i])[0])
 
     w_btl = w_btl / sum(w_btl)
     return w_btl
@@ -121,7 +128,7 @@ def spec_algorithm(P_btl):
             else:
                 # apply link function
                 if (i==j):
-                    P_transit[i][j] = 1 - (1/d) * sum(P_T[i])
+                    P_transit[i][j] = 1 - (1/d) * (sum(P_T[i]) - P_T[i][i])
                 else:
                     P_transit[i][j] = (1/d) * P_T[i][j]
 
@@ -159,7 +166,7 @@ def mle_algorithm(P_btl, w_min, w_max):
     w_t = w_spec.copy()
 
     # number of iterations
-    T = math.floor(5 * math.log2(n))
+    T = math.floor(5 * math.log(n))
 
     for t in range(0, T):
         # coordinate wise MLE part 1
@@ -173,7 +180,7 @@ def mle_algorithm(P_btl, w_min, w_max):
                 for j in range(0, n):
                     # sum across j : (i, j) in E
                     if (P_btl[i][j] != 0 and j != i):
-                        curr_P += P_btl[i][j] * math.log2(tau / (tau + w_spec[j])) + (1 - P_btl[i][j]) * math.log2(w_spec[j]/ (tau + w_spec[j]))
+                        curr_P += P_btl[i][j] * math.log(tau / (tau + w_t[j])) + (1 - P_btl[i][j]) * math.log(w_t[j]/ (tau + w_t[j]))
                 # new best value for tau
                 if (curr_P > max_P):
                     max_P = curr_P
@@ -182,25 +189,32 @@ def mle_algorithm(P_btl, w_min, w_max):
             w_mle[i] = tau_best
 
         # threshold value for using mle-generated values
-        E_min = math.sqrt(math.log2(n) / (n * e * L))
-        E_max = math.sqrt(math.log2(n) / (e * L))
-        E_t = (E_min + 1/(math.pow(2, t)) * (E_max - E_min)) / 1000
+        E_min = math.sqrt(math.log(n) / (n * e * L))
+        E_max = math.sqrt(math.log(n) / (e * L))
+        E_t = (E_min + 1/(math.pow(2, t)) * (E_max - E_min))
+
+
+        #print("E_min: ", E_min)
 
 
         # MLE part 2
-        modified = False
+        #modified = False
         for i in range(0, n):
             # if difference is large enough, pick new (mle-generated) value
+            # if (t == 0):
+            #     print("difference: ", abs(w_mle[i] - w_t[i]))
+            #     print("w: ", w_t[i])
+            
             if (abs(w_mle[i] - w_t[i]) > E_t):
                 w_t[i] = w_mle[i]
-                modified = True
-                # print("\tmodified: ", i, ", ", w_mle[i])
+                #modified = True
+                print("\tmodified: ", i, ", ", w_mle[i])
             else:
                 # redundant, but here for clarity
                 w_t[i] = w_t[i]
         # stop iterating if no values are modified to avoid redundant iterations
-        if (not modified):
-            break
+        #if (not modified):
+        #    break
     return w_t
 
 def lrpr_algorithm(P):
@@ -217,7 +231,7 @@ def lrpr_algorithm(P):
                 if (P[i][j] == 1):
                     link[i][j] = 0
                     continue
-                link[i][j] = math.log2(P[i][j] / (1 - P[i][j]))      
+                link[i][j] = math.log(P[i][j] / (1 - P[i][j]))      
 
     os = OptSpace(2, 5, 0.0001)
     U, S, V = os.solve(link)
@@ -230,8 +244,8 @@ def lrpr_algorithm(P):
     # construct matrix according to algorithm
     for i in range(0, n):
         for j in range(0, n):
-                inv_ij = math.pow(2, opt_mat[i][j]) / (1 + math.pow(2, opt_mat[i][j]))
-                inv_ji = math.pow(2, opt_mat[j][i]) / (1 + math.pow(2, opt_mat[j][i]))
+                inv_ij = math.pow(math.e, opt_mat[i][j]) / (1 + math.pow(math.e, opt_mat[i][j]))
+                inv_ji = math.pow(math.e, opt_mat[j][i]) / (1 + math.pow(math.e, opt_mat[j][i]))
                 if (i == j):
                     inv_link[i][j] = 1/2
                 elif (opt_mat[i][j] > opt_mat[j][i]):                                     
@@ -261,7 +275,7 @@ def simulate(n, L, e, gap):
     #==================Linear Program==================
     # models: btl, thurstone
     print("before lp")
-    w_lp = lp_algorithm(P)
+    w_lp = lp_algorithm(P, min(w_norm), max(w_norm))
     # w_lp = [0]*n
     #==================Spectral Method==================
     # models: btl
@@ -324,38 +338,38 @@ def simulate(n, L, e, gap):
     l_inf_err[3] = max(abs(np.subtract(w_lrpr, w_norm)))/max(w_norm)
 
     # D_w error
-    for i in range(0, n):
-        for j in range(i, n):
-            if ((w_norm[i] - w_norm[j]) * (w_lp[i] - w_lp[j]) < 0):
-                D_w_err[0] += math.pow((w_norm[i] - w_norm[j]), 2)
-            if ((w_norm[i] - w_norm[j]) * (w_spec[i] - w_spec[j]) < 0):
-                D_w_err[1] += math.pow((w_norm[i] - w_norm[j]), 2)
-            if ((w_norm[i] - w_norm[j]) * (w_mle[i] - w_mle[j]) < 0):
-                D_w_err[2] += math.pow((w_norm[i] - w_norm[j]), 2)
-            if ((w_norm[i] - w_norm[j]) * (w_lrpr[i] - w_lrpr[j]) < 0):
-                D_w_err[3] += math.pow((w_norm[i] - w_norm[j]), 2)
-
-    D_w_err[0] = math.sqrt(D_w_err[0] / (2*n*math.pow(np.linalg.norm(w), 2)))
-    D_w_err[1] = math.sqrt(D_w_err[1] / (2*n*math.pow(np.linalg.norm(w), 2)))
-    D_w_err[2] = math.sqrt(D_w_err[2] / (2*n*math.pow(np.linalg.norm(w), 2)))
-    D_w_err[3] = math.sqrt(D_w_err[3] / (2*n*math.pow(np.linalg.norm(w), 2)))
-
-    # alternative D_w error according to LRPR paper
     # for i in range(0, n):
     #     for j in range(i, n):
     #         if ((w_norm[i] - w_norm[j]) * (w_lp[i] - w_lp[j]) < 0):
-    #             D_w_err[0] += 1
+    #             D_w_err[0] += math.pow((w_norm[i] - w_norm[j]), 2)
     #         if ((w_norm[i] - w_norm[j]) * (w_spec[i] - w_spec[j]) < 0):
-    #             D_w_err[1] += 1
+    #             D_w_err[1] += math.pow((w_norm[i] - w_norm[j]), 2)
     #         if ((w_norm[i] - w_norm[j]) * (w_mle[i] - w_mle[j]) < 0):
-    #             D_w_err[2] += 1
+    #             D_w_err[2] += math.pow((w_norm[i] - w_norm[j]), 2)
     #         if ((w_norm[i] - w_norm[j]) * (w_lrpr[i] - w_lrpr[j]) < 0):
-    #             D_w_err[3] += 1
+    #             D_w_err[3] += math.pow((w_norm[i] - w_norm[j]), 2)
 
-    # D_w_err[0] = D_w_err[0] / (n * (n-1) / 2)
-    # D_w_err[1] = D_w_err[1] / (n * (n-1) / 2)
-    # D_w_err[2] = D_w_err[2] / (n * (n-1) / 2)
-    # D_w_err[3] = D_w_err[3] / (n * (n-1) / 2)
+    # D_w_err[0] = math.sqrt(D_w_err[0] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
+    # D_w_err[1] = math.sqrt(D_w_err[1] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
+    # D_w_err[2] = math.sqrt(D_w_err[2] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
+    # D_w_err[3] = math.sqrt(D_w_err[3] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
+
+    # alternative D_w error according to LRPR paper
+    for i in range(0, n):
+        for j in range(i, n):
+            if ((w_norm[i] - w_norm[j]) * (w_lp[i] - w_lp[j]) < 0):
+                D_w_err[0] += 1
+            if ((w_norm[i] - w_norm[j]) * (w_spec[i] - w_spec[j]) < 0):
+                D_w_err[1] += 1
+            if ((w_norm[i] - w_norm[j]) * (w_mle[i] - w_mle[j]) < 0):
+                D_w_err[2] += 1
+            if ((w_norm[i] - w_norm[j]) * (w_lrpr[i] - w_lrpr[j]) < 0):
+                D_w_err[3] += 1
+
+    D_w_err[0] = D_w_err[0] / (n * (n-1) / 2)
+    D_w_err[1] = D_w_err[1] / (n * (n-1) / 2)
+    D_w_err[2] = D_w_err[2] / (n * (n-1) / 2)
+    D_w_err[3] = D_w_err[3] / (n * (n-1) / 2)
 
     return rankings_comp, l_inf_err, D_w_err
 
@@ -448,8 +462,8 @@ def init_csv(main, error) :
 model = 'btl'
 
 # if appending trials to an existing file, comment out init_csv and change "w"s to "a"
-ranks = open(("rank_" + model + "8.csv"), "w")
-err = open(("error_" + model + "8.csv"), "w")
+ranks = open(("rank_" + model + "3.csv"), "w")
+err = open(("error_" + model + "3.csv"), "w")
 init_csv(ranks, err)
 
 # n: number of items
@@ -458,12 +472,12 @@ init_csv(ranks, err)
 # gap: imposed gap in w score between first element and all others
 # j: trials per data point
 
-for n in [500]:
-    for L in [10, 20, 30, 40]:  
-        for e in [0.15, 0.30, 0.45]: 
-            gap = 0.0
+for n in [100]:
+    for L in [5]:   
+        for e in [0.2]: 
+            gap = 0
             for j in range(0, 20):
-                    print(n, L, e, j)
+                    print(n, L, e, gap, j)
                     run_trial(n, L, e, gap, ranks, err)
 
 
