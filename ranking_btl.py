@@ -5,8 +5,6 @@ from numpy.linalg import eig
 import gurobipy as gp
 from gurobipy import GRB
 import math
-import csv
-from scipy.stats import norm
 from optspace import OptSpace
 
 # ALGORITHMS BEING TESTED:
@@ -20,6 +18,10 @@ from optspace import OptSpace
 def make_P(n, e, L, w):
 
     P_btl = np.zeros((n, n))
+
+    # keep track of nonzero entries for i != j, to speed up algorithm
+    P_nonzero = [[] for i in range(n)]
+
     # fill in probability matrix
     for i in range(0, n):
         for j in range(i, n):
@@ -33,19 +35,25 @@ def make_P(n, e, L, w):
                 # record the probability of wins and the inverse in each matrix ([i][j] and [j][i])
                 P_btl[i][j] = wins / L
                 P_btl[j][i] = 1 - P_btl[i][j]
+
+                P_nonzero[i].append(j)
+                P_nonzero[j].append(i)
             # else: P_ij = 0
             else:
                 P_btl[i][j] = 0
 
     df = pd.DataFrame(data=P_btl)
     df.to_excel('P_btl.xlsx', sheet_name='P_btl')
-    return P_btl         
+    return P_btl, P_nonzero         
 
 # creating 1D  w vector: value/weight/score of each element; ranges from 0.5-1
 def make_w(n, delta_k):
     w = [0] * n
-    # w[0] = 0.5
-    for i in range(0, n):
+    if (delta_k > 0):
+        w[0] = 0.5
+    else:
+        w[0] = random.random() * (0.5 - delta_k) + (0.5 + delta_k)
+    for i in range(1, n):
         w[i] = random.random() * (0.5 - delta_k) + (0.5 + delta_k)
 
     # for i in range(0, n):
@@ -153,7 +161,7 @@ def spec_algorithm(P_btl):
     pi = pi / sum(pi)
     return pi
 
-def mle_algorithm(P_btl, w_min, w_max):
+def mle_algorithm(P_btl, P_nonzero, w_min, w_max):
     # vector approximating w: w_t
 
     w_spec = spec_algorithm(P_btl)
@@ -166,8 +174,10 @@ def mle_algorithm(P_btl, w_min, w_max):
     w_t = w_spec.copy()
 
     # number of iterations
-    T = math.floor(5 * math.log(n))
+    #T = math.floor(5 * math.log(n))
+    T = 20
 
+    
     for t in range(0, T):
         # coordinate wise MLE part 1
         for i in range(0, n): 
@@ -177,9 +187,9 @@ def mle_algorithm(P_btl, w_min, w_max):
             # compute probability for each possible value for tau
             while (tau <= w_max):
                 curr_P = 0
-                for j in range(0, n):
+                for j in P_nonzero[i]:
                     # sum across j : (i, j) in E
-                    if (P_btl[i][j] != 0 and j != i):
+                    #if (P_btl[i][j] != 0 and j != i):
                         curr_P += P_btl[i][j] * math.log(tau / (tau + w_t[j])) + (1 - P_btl[i][j]) * math.log(w_t[j]/ (tau + w_t[j]))
                 # new best value for tau
                 if (curr_P > max_P):
@@ -192,26 +202,25 @@ def mle_algorithm(P_btl, w_min, w_max):
         E_min = math.sqrt(math.log(n) / (n * e * L))
         E_max = math.sqrt(math.log(n) / (e * L))
         E_t = (E_min + 1/(math.pow(2, t)) * (E_max - E_min))
-
-
-        #print("E_min: ", E_min)
-
+        E_t = 0
 
         # MLE part 2
-        #modified = False
+        # NOTE: make separate version for all updates
+        #quit = True
         for i in range(0, n):
             # if difference is large enough, pick new (mle-generated) value
-            # if (t == 0):
-            #     print("difference: ", abs(w_mle[i] - w_t[i]))
-            #     print("w: ", w_t[i])
-            
             if (abs(w_mle[i] - w_t[i]) > E_t):
                 w_t[i] = w_mle[i]
                 #modified = True
-                print("\tmodified: ", i, ", ", w_mle[i])
+                #print("\tmodified: ", i, ", ", w_mle[i])
+            #elif (abs(w_mle[i] - w_t[i]) > E_min):
+                #quit = False
             else:
                 # redundant, but here for clarity
                 w_t[i] = w_t[i]
+            # if (quit):
+            #     pass
+
         # stop iterating if no values are modified to avoid redundant iterations
         #if (not modified):
         #    break
@@ -270,7 +279,7 @@ def lrpr_algorithm(P):
 def simulate(n, L, e, gap):
     w = make_w(n, gap)
     w_norm = np.asarray(w) / sum(w)
-    P = make_P(n, e, L, w)
+    P, P_nonzero = make_P(n, e, L, w)
 
     #==================Linear Program==================
     # models: btl, thurstone
@@ -285,7 +294,7 @@ def simulate(n, L, e, gap):
     #======================MLE==========================
     # models: btl
     print("before mle")
-    w_mle = mle_algorithm(P, min(w_norm), max(w_norm))
+    w_mle = mle_algorithm(P, P_nonzero, min(w_norm), max(w_norm))
     # w_mle = [0]*n
 
     #================Low Rank Pairwise Ranking=================
@@ -338,38 +347,38 @@ def simulate(n, L, e, gap):
     l_inf_err[3] = max(abs(np.subtract(w_lrpr, w_norm)))/max(w_norm)
 
     # D_w error
-    # for i in range(0, n):
-    #     for j in range(i, n):
-    #         if ((w_norm[i] - w_norm[j]) * (w_lp[i] - w_lp[j]) < 0):
-    #             D_w_err[0] += math.pow((w_norm[i] - w_norm[j]), 2)
-    #         if ((w_norm[i] - w_norm[j]) * (w_spec[i] - w_spec[j]) < 0):
-    #             D_w_err[1] += math.pow((w_norm[i] - w_norm[j]), 2)
-    #         if ((w_norm[i] - w_norm[j]) * (w_mle[i] - w_mle[j]) < 0):
-    #             D_w_err[2] += math.pow((w_norm[i] - w_norm[j]), 2)
-    #         if ((w_norm[i] - w_norm[j]) * (w_lrpr[i] - w_lrpr[j]) < 0):
-    #             D_w_err[3] += math.pow((w_norm[i] - w_norm[j]), 2)
-
-    # D_w_err[0] = math.sqrt(D_w_err[0] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
-    # D_w_err[1] = math.sqrt(D_w_err[1] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
-    # D_w_err[2] = math.sqrt(D_w_err[2] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
-    # D_w_err[3] = math.sqrt(D_w_err[3] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
-
-    # alternative D_w error according to LRPR paper
     for i in range(0, n):
         for j in range(i, n):
             if ((w_norm[i] - w_norm[j]) * (w_lp[i] - w_lp[j]) < 0):
-                D_w_err[0] += 1
+                D_w_err[0] += math.pow((w_norm[i] - w_norm[j]), 2)
             if ((w_norm[i] - w_norm[j]) * (w_spec[i] - w_spec[j]) < 0):
-                D_w_err[1] += 1
+                D_w_err[1] += math.pow((w_norm[i] - w_norm[j]), 2)
             if ((w_norm[i] - w_norm[j]) * (w_mle[i] - w_mle[j]) < 0):
-                D_w_err[2] += 1
+                D_w_err[2] += math.pow((w_norm[i] - w_norm[j]), 2)
             if ((w_norm[i] - w_norm[j]) * (w_lrpr[i] - w_lrpr[j]) < 0):
-                D_w_err[3] += 1
+                D_w_err[3] += math.pow((w_norm[i] - w_norm[j]), 2)
 
-    D_w_err[0] = D_w_err[0] / (n * (n-1) / 2)
-    D_w_err[1] = D_w_err[1] / (n * (n-1) / 2)
-    D_w_err[2] = D_w_err[2] / (n * (n-1) / 2)
-    D_w_err[3] = D_w_err[3] / (n * (n-1) / 2)
+    D_w_err[0] = math.sqrt(D_w_err[0] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
+    D_w_err[1] = math.sqrt(D_w_err[1] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
+    D_w_err[2] = math.sqrt(D_w_err[2] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
+    D_w_err[3] = math.sqrt(D_w_err[3] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
+
+    # alternative D_w error according to LRPR paper
+    # for i in range(0, n):
+    #     for j in range(i, n):
+    #         if ((w_norm[i] - w_norm[j]) * (w_lp[i] - w_lp[j]) < 0):
+    #             D_w_err[0] += 1
+    #         if ((w_norm[i] - w_norm[j]) * (w_spec[i] - w_spec[j]) < 0):
+    #             D_w_err[1] += 1
+    #         if ((w_norm[i] - w_norm[j]) * (w_mle[i] - w_mle[j]) < 0):
+    #             D_w_err[2] += 1
+    #         if ((w_norm[i] - w_norm[j]) * (w_lrpr[i] - w_lrpr[j]) < 0):
+    #             D_w_err[3] += 1
+
+    # D_w_err[0] = D_w_err[0] / (n * (n-1) / 2)
+    # D_w_err[1] = D_w_err[1] / (n * (n-1) / 2)
+    # D_w_err[2] = D_w_err[2] / (n * (n-1) / 2)
+    # D_w_err[3] = D_w_err[3] / (n * (n-1) / 2)
 
     return rankings_comp, l_inf_err, D_w_err
 
@@ -462,8 +471,8 @@ def init_csv(main, error) :
 model = 'btl'
 
 # if appending trials to an existing file, comment out init_csv and change "w"s to "a"
-ranks = open(("rank_" + model + "3.csv"), "w")
-err = open(("error_" + model + "3.csv"), "w")
+ranks = open(("rank_" + model + "fig2_2.csv"), "w")
+err = open(("error_" + model + "fig2_2.csv"), "w")
 init_csv(ranks, err)
 
 # n: number of items
@@ -472,10 +481,10 @@ init_csv(ranks, err)
 # gap: imposed gap in w score between first element and all others
 # j: trials per data point
 
-for n in [100]:
-    for L in [5]:   
-        for e in [0.2]: 
-            gap = 0
+for n in [500]:
+    for L in [30]:   
+        for e in [5*math.log(n)/n, 10*math.log(n)/n, 15*math.log(n)/n, 20*math.log(n)/n]: 
+            gap = 0.0
             for j in range(0, 20):
                     print(n, L, e, gap, j)
                     run_trial(n, L, e, gap, ranks, err)
