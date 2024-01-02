@@ -50,21 +50,26 @@ def make_P(n, e, L, w):
 # creating 1D  w vector: value/weight/score of each element
 def make_w(n, delta_k):
     w = [0] * n
-    w[0] = 0.5
-    for i in range(1, n):
-        w[i] = random.random() * (0.5 - delta_k) + (0.5 + delta_k)
+    for i in range(0, n):
+        w[i] = random.random() * 0.5 + 0.5
 
+    w_min = min(w)
 
-    #df = pd.DataFrame(data=w)
-    #df.to_excel('w_vector.xlsx', sheet_name='w_vector')
+    for i in range(0, n):
+        if (w[i] > w_min):
+            w[i] += delta_k
+
+    df = pd.DataFrame(data=w)
+    df.to_excel('w.xlsx', sheet_name='w')
+
     return w
 
 # approximate w with linear program
-def lp_algorithm(P):
+def lp_algorithm(P, w_min, w_max):
 
     m_thu = gp.Model("Thurstone")
     # x: 1D vector (used to approximate s)
-    x_thu = m_thu.addMVar((n, 1), lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="x")
+    x_thu = m_thu.addMVar((n, 1), lb=math.log(w_min), ub=math.log(w_max), vtype=GRB.CONTINUOUS, name="x")
     # z: nxn matrix, z = Y - P
     z_thu = m_thu.addMVar((n, n), lb=0.0, vtype=GRB.CONTINUOUS, name="z")
 
@@ -76,7 +81,7 @@ def lp_algorithm(P):
     link_thu = np.zeros((n, n))
     for i in range(0, n):
         for j in range(0, n):
-            # we assume no probabilities are zero, if btl is zero, so is thu
+            # we assume no probabilities are zero unless they were not compared
             if (P[i][j] == 0):
                 link_thu[i][j] = 0
             else:
@@ -87,12 +92,13 @@ def lp_algorithm(P):
                 link_thu[i][j] = norm.ppf(P[i][j])
                 if (i != j):
                     mask[i][j] = 1
-    
+
     # constraints
     m_thu.addConstr((x_thu @ eVec.T) - (eVec @ x_thu.T) + z_thu - link_thu >= zeroMat)
     m_thu.addConstr((x_thu @ eVec.T) - (eVec @ x_thu.T) - z_thu - link_thu <= zeroMat)
 
     # constraints include entire matrix, but we only care when link[i][j] != 0 and i != j; so apply a mask: np.multiply(z, mask)
+    # this way, the optimization problem can ignore zero entries
     m_thu.setObjective((z_thu * mask).sum(), GRB.MINIMIZE)
 
     m_thu.optimize()
@@ -109,6 +115,7 @@ def lp_algorithm(P):
 
 
 def lrpr_algorithm(P):
+    # vector approximating w: sigma
 
     # P with linking function applied
     link = np.zeros((n, n))
@@ -128,9 +135,6 @@ def lrpr_algorithm(P):
 
     opt_mat = np.matmul(np.matmul(U, S), V.T)
 
-    df = pd.DataFrame(data = opt_mat)
-    df.to_excel('opt_mat.xlsx', sheet_name='opt_mat')
-
     inv_link = np.zeros((n, n))
     
     for i in range(0, n):
@@ -144,20 +148,16 @@ def lrpr_algorithm(P):
                 else:
                     inv_link[i][j] = 1/2 - min(abs(inv_ij - 1/2), abs(inv_ji - 1/2))
 
+    # copeland ranking: w[i] = number of entries with probability > 0.5
     sigma = [0] * n
-
     for i in range(0, n):
         for j in range(0, n):
             if (inv_link[i][j] > 0.5):
                 sigma[i] += 1
 
-    df = pd.DataFrame(data = sigma)
-    df.to_excel('sigma.xlsx', sheet_name='sigma')
-
     s_norm = np.asarray(sigma) / sum(sigma)
 
     return s_norm
-
 
 # run a trial with n items, 
 # where e is the probability that any pair of elements will be compared, 
@@ -169,14 +169,14 @@ def simulate(n, L, e, gap):
 
     #==================Linear Program==================
     # models: btl, thurstone
-    # approximating w vector with: w_btl, w_thu
     print("before lp")
-    w_lp = lp_algorithm(P)
+    w_lp = lp_algorithm(P, min(w_norm), max(w_norm))
+    # w_lp = [0]*n
     #================Low Rank Pairwise Ranking=================
     # models: btl, thu
-    # approximating w vector with: w_lrpr
     print("before lrpr")
     w_lrpr = lrpr_algorithm(P) 
+    # w_lrpr = [0]*n
     print("done")
 
     #==================Comparing Algorithms==================
@@ -207,34 +207,27 @@ def simulate(n, L, e, gap):
     l_inf_err = [0]*2
     D_w_err = [0]*2
 
-    # entrywise error
+    # l infinity error
     l_inf_err[0] = max(abs(np.subtract(w_lp, w_norm)))/max(w_norm)
     l_inf_err[1] = max(abs(np.subtract(w_lrpr, w_norm)))/max(w_norm)
 
     # D_w error
     for i in range(0, n):
         for j in range(i, n):
-            if ((w_norm[i] - w_norm[j]) * (w_lp[i] - w_lp[j]) > 0):
+            if ((w_norm[i] - w_norm[j]) * (w_lp[i] - w_lp[j]) < 0):
                 D_w_err[0] += math.pow((w_norm[i] - w_norm[j]), 2)
-            if ((w_norm[i] - w_norm[j]) * (w_lrpr[i] - w_lrpr[j]) > 0):
+            if ((w_norm[i] - w_norm[j]) * (w_lrpr[i] - w_lrpr[j]) < 0):
                 D_w_err[1] += math.pow((w_norm[i] - w_norm[j]), 2)
 
-    D_w_err[0] = math.sqrt(D_w_err[0] / (2*n*math.pow(np.linalg.norm(w), 2)))
-    D_w_err[1] = math.sqrt(D_w_err[1] / (2*n*math.pow(np.linalg.norm(w), 2)))
-
-    df = pd.DataFrame(data = l_inf_err)
-    df.to_excel('l_inf_err.xlsx', sheet_name='l_inf_err')
+    D_w_err[0] = math.sqrt(D_w_err[0] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
+    D_w_err[1] = math.sqrt(D_w_err[1] / (2*n*math.pow(np.linalg.norm(w_norm), 2)))
 
     return rankings_comp, l_inf_err, D_w_err
-    
-
 
 # running an instance of a simulation, and recording the results in csv files
 def run_trial(n, L, e, gap, rank, err):
 
     rankings, l_inf_err, D_w_err = simulate(n, L, e, gap)
-    # print("rankings: ", rankings)
-    # print("errors: ", errors)
 
     str_lp = "\"thu\",\"lp\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + ","
     str_lrpr = "\"thu\",\"lrpr\"," + str(n) + "," + str(e) + "," + str(L) + "," + str(gap) + ","
@@ -247,6 +240,7 @@ def run_trial(n, L, e, gap, rank, err):
     rank_lp = set()
     rank_lrpr = set()
 
+    # record up to top 20 ranks
     for k in range(0, 20):
         rank_true.add(rankings[k][0])
         rank_lp.add(rankings[k][1])
@@ -255,6 +249,7 @@ def run_trial(n, L, e, gap, rank, err):
         lp_correct = len(rank_true.intersection(rank_lp))
         lrpr_correct = len(rank_true.intersection(rank_lrpr))
 
+        # record when it guesses the set of top k items correctly
         lp_correct = lp_correct == k + 1
         lrpr_correct = lrpr_correct == k + 1
 
@@ -270,7 +265,6 @@ def run_trial(n, L, e, gap, rank, err):
     
     rank.write(str_lp)
     rank.write(str_lrpr)
-  
 
 def init_csv(main, error) :
     main.write("\"model\",")
@@ -302,17 +296,20 @@ ranks = open(("rank_" + model + "2.csv"), "a")
 err = open(("error_" + model + "2.csv"), "a")
 init_csv(ranks, err)
 
+# n: number of items
+# L: number of comparisons
+# e probability of 2 items being compared
+# gap: imposed gap in w score between first element and all others
+# j: trials per data point
 
 for n in [500]:
-    #L = n*n*50
-    for L in [30]:  
+    for L in [30]:
         e = 10 * math.log(n) / n
         gap = 0.0
         for j in range(0, 20):
-                print(n, L, j)
+                print(n, L, e, gap, j)
                 run_trial(n, L, e, gap, ranks, err)
 
 
 ranks.close()
 err.close()
-

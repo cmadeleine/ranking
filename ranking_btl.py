@@ -46,19 +46,18 @@ def make_P(n, e, L, w):
     df.to_excel('P_btl.xlsx', sheet_name='P_btl')
     return P_btl, P_nonzero         
 
-# creating 1D  w vector: value/weight/score of each element; ranges from 0.5-1
+# creating 1D  w vector: value/weight/score of each element
 def make_w(n, delta_k):
     w = [0] * n
-    if (delta_k > 0):
-        w[0] = 0.5
-    else:
-        w[0] = random.random() * (0.5 - delta_k) + (0.5 + delta_k)
-    for i in range(1, n):
-        w[i] = random.random() * (0.5 - delta_k) + (0.5 + delta_k)
+    for i in range(0, n):
+        w[i] = random.random() * 0.5 + 0.5
 
-    # for i in range(0, n):
-    #     w[i] = random.random()
-    
+    w_min = min(w)
+
+    for i in range(0, n):
+        if (w[i] > w_min):
+            w[i] += delta_k
+
     df = pd.DataFrame(data=w)
     df.to_excel('w.xlsx', sheet_name='w')
 
@@ -482,7 +481,7 @@ init_csv(ranks, err)
 # j: trials per data point
 
 for n in [500]:
-    for L in [30]:   
+    for L in [30]:
         for e in [5*math.log(n)/n, 10*math.log(n)/n, 15*math.log(n)/n, 20*math.log(n)/n]: 
             gap = 0.0
             for j in range(0, 20):
